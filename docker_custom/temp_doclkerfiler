@@ -1,0 +1,174 @@
+FROM nvidia/cuda:8.0-cudnn5-devel-ubuntu16.04
+LABEL maintainer "NVIDIA CORPORATION <cudatools@nvidia.com>"
+
+RUN echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1604/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list
+
+ENV CUDNN_VERSION 6.0.21
+ENV CLONE_TAG=master
+LABEL com.nvidia.cudnn.version="${CUDNN_VERSION}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends apt-utils \
+        libcudnn6=$CUDNN_VERSION-1+cuda8.0 \
+        build-essential \
+        cmake \
+        make \
+        git \
+        wget \
+        sudo \
+        g++ \
+        automake \
+        autoconf \
+        autoconf-archive \
+        libtool \
+        libevent-dev \
+        libdouble-conversion-dev \
+        libgflags-dev \
+        liblz4-dev \
+        liblzma-dev \
+        zlib1g-dev \
+        binutils-dev \
+        libjemalloc-dev \
+        flex \
+        bison \
+        libkrb5-dev \
+        libsasl2-dev \
+        libnuma-dev \
+        pkg-config \
+        libedit-dev \
+        libmatio-dev \
+        software-properties-common \
+        libssl-dev \
+        libzmq3-dev \        
+        python-zmq \
+        libatlas-base-dev \
+        libboost-all-dev \
+        libgflags-dev \
+        libgoogle-glog-dev \
+        libhdf5-serial-dev \
+        libleveldb-dev \
+        liblmdb-dev \
+        libopencv-dev \
+        libprotobuf-dev \
+        libsnappy-dev \
+        libgeos-dev \
+        libiberty-dev \
+        protobuf-compiler \
+        python-dev \
+        python-numpy \
+        python-pip \
+        python-scipy \
+        python-setuptools \
+        libhdf5-dev \
+        libhdf5-serial-dev \
+        libopenblas-dev \
+        python-opencv && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CAFFE_ROOT=/opt/caffe
+ENV TORCH_ROOT=/root/torch
+
+WORKDIR $CAFFE_ROOT
+
+# FIXME: clone a specific git tag and use ARG instead of ENV once DockerHub supports this.
+ENV CLONE_TAG=master
+
+# Set this with `docker build --build-arg CLONE_REPO=$(git remote get-url --all origin) .`
+# Note that will only work for https urls since ssh is not installed in the image
+ARG CLONE_REPO
+RUN git clone -b ${CLONE_TAG} --depth 1 $CLONE_REPO .
+
+# Required for recent GPUs
+RUN pip install --upgrade pip
+RUN for req in $(cat python/requirements.txt); do pip install $req; done && \
+    mkdir build && cd build && \
+    cmake .. -DCUDA_ARCH_NAME=Manual && \
+    make -j"$(nproc)"
+
+# HACK: OpenCV can be confused by (the lack of) this driver in some systems
+RUN ln /dev/null /dev/raw1394
+
+#SET caffe env vars
+ENV PYCAFFE_ROOT $CAFFE_ROOT/python
+ENV PYTHONPATH $PYCAFFE_ROOT:$PYTHONPATH
+ENV PATH $CAFFE_ROOT/build/tools:$PYCAFFE_ROOT:$PATH
+ENV CPATH="/usr/include/hdf5/serial/"
+
+RUN echo "$CAFFE_ROOT/build/lib" >> /etc/ld.so.conf.d/caffe.conf && ldconfig
+
+RUN ln -s /usr/local/lib/python2.7/dist-packages/numpy/core/include/numpy /usr/local/include/numpy
+RUN pip install --upgrade protobuf
+RUN pip install -U numpy
+
+
+#compile tb++
+WORKDIR /opt/caffe
+#sudo ln -s libhdf5.so.7.0.0 libhdf5_serial.so
+#sudo ln -s libhdf5_hl.so.7 libhdf5_serial_hl.so
+RUN cp Makefile.config.example Makefile.config
+RUN make -j4
+RUN make py
+
+RUN echo "Installing CRNN stuff..."
+# Run Torch7 installation scripts
+WORKDIR $TORCH_ROOT
+RUN git clone https://github.com/torch/distro.git /root/torch --recursive
+RUN cd /root/torch
+RUN bash install-deps
+RUN ./install.sh
+
+# Export environment variables manually
+ENV LUA_PATH='/root/.luarocks/share/lua/5.1/?.lua;/root/.luarocks/share/lua/5.1/?/init.lua;/root/torch/install/share/lua/5.1/?.lua;/root/torch/install/share/lua/5.1/?/init.lua;./?.lua;/root/torch/install/share/luajit-2.1.0-beta1/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua'
+ENV LUA_CPATH='/root/.luarocks/lib/lua/5.1/?.so;/root/torch/install/lib/lua/5.1/?.so;./?.so;/usr/local/lib/lua/5.1/?.so;/usr/local/lib/lua/5.1/loadall.so'
+ENV PATH=/root/torch/install/bin:$PATH
+ENV LD_LIBRARY_PATH=/root/torch/install/lib:$LD_LIBRARY_PATH
+ENV DYLD_LIBRARY_PATH=/root/torch/install/lib:$DYLD_LIBRARY_PATH
+ENV LUA_CPATH='/root/torch/install/lib/?.so;'$LUA_CPATH
+
+#clone shits for thpp etc
+FB_LUA_DIR = $(mktemp --tmpdir -d fblualib-build.XXXXXX)
+WORKDIR $FB_LUA_DIR
+git clone --depth 1 https://github.com/facebook/folly 
+git clone --depth 1 https://github.com/facebook/fbthrift
+git clone https://github.com/facebook/thpp
+git clone https://github.com/facebook/fblualib
+git clone https://github.com/facebook/wangle
+
+#build folly
+cd $FB_LUA_DIR/folly/folly
+autoreconf -ivf
+./configure
+make
+sudo make install
+sudo ldconfig # reload the lib paths after freshly installed folly. fbthrift needs it.
+
+cd $FB_LUA_DIR/wangle/wangle
+cmake .
+make
+sudo make install
+
+#Building fbthrift
+cd $FB_LUA_DIR/fbthrift/thrift
+autoreconf -ivf
+./configure
+
+pushd lib/cpp2/fatal/internal
+ln -s folly_dynamic-inl-pre.h folly_dynamic-inl.h
+popd
+make
+sudo make install
+
+# Installing TH++
+cd $FB_LUA_DIR/thpp/thpp
+./build.sh
+
+#Installing FBLuaLib
+cd $dir/fblualib/fblualib
+./build.sh
+
+RUN sudo pip install matplotlib
+RUN sudo pip install shapely
+RUN sudo pip install skimage.io
+
+echo "DONE !"
+#DONE!
+WORKDIR /opt/caffe

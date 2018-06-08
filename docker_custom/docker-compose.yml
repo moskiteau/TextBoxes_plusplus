@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+  crnn:
+    image: rremani/cuda_crnn_torch
+    volumes:
+      - /data-part:/data
+      
+
+  caffe_txtbox:
+    build:
+      context: .
+      args: 
+        CLONE_REPO: https://github.com/moskiteau/TextBoxes_plusplus.git
+    volumes:
+      - /data-part:/data
+
