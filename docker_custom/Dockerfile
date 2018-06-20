@@ -1,14 +1,10 @@
-FROM nvidia/cuda:8.0-cudnn5-devel-ubuntu16.04
-LABEL maintainer "NVIDIA CORPORATION <cudatools@nvidia.com>"
+FROM scannerresearch/scanner:gpu-9.1-cudnn7
+MAINTAINER Sebastien Testeau "s.testeau@nfb.ca"
 
-RUN echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1604/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list
-
-ENV CUDNN_VERSION 6.0.21
-ENV CLONE_TAG=master
-LABEL com.nvidia.cudnn.version="${CUDNN_VERSION}"
+ENV CUDNN_VERSION 7.1.4.18
 
 RUN apt-get update && apt-get install -y --no-install-recommends apt-utils \
-        libcudnn6=$CUDNN_VERSION-1+cuda8.0 \
+        libcudnn7=$CUDNN_VERSION-1+cuda9.2 \
         build-essential \
         cmake \
         git \
@@ -16,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends apt-utils \
         sudo \
         software-properties-common \
         libssl-dev \
-        libzmq3-dev \        
+        libzmq3-dev \
         python-zmq \
         libatlas-base-dev \
         libboost-all-dev \
@@ -52,7 +48,7 @@ ENV CLONE_TAG=master
 # Note that will only work for https urls since ssh is not installed in the image
 
 ARG CLONE_REPO
-
+RUN echo ${CLONE_REPO}
 RUN git clone -b ${CLONE_TAG} --depth 1 $CLONE_REPO .
 
 # Required for recent GPUs
