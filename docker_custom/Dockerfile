@@ -4,7 +4,6 @@ MAINTAINER Sebastien Testeau "s.testeau@nfb.ca"
 ENV CUDNN_VERSION 7.1.4.18
 
 RUN apt-get update && apt-get install -y --no-install-recommends apt-utils \
-        libcudnn7=$CUDNN_VERSION-1+cuda9.2 \
         build-essential \
         cmake \
         git \
@@ -47,16 +46,19 @@ ENV CLONE_TAG=master
 # Set this with `docker build --build-arg CLONE_REPO=$(git remote get-url --all origin) .`
 # Note that will only work for https urls since ssh is not installed in the image
 
-ARG CLONE_REPO
+ENV CLONE_REPO=https://github.com/moskiteau/TextBoxes_plusplus.git
 RUN echo ${CLONE_REPO}
 RUN git clone -b ${CLONE_TAG} --depth 1 $CLONE_REPO .
 
 # Required for recent GPUs
+ADD requirements.txt .
 RUN pip install --upgrade pip
-RUN for req in $(cat python/requirements.txt); do pip install $req; done && \
-    mkdir build && cd build && \
-    cmake .. -DCUDA_ARCH_NAME=Manual && \
-    make -j"$(nproc)"
+RUN pip install -r requirements.txt
+ADD . .
+
+COPY Makefile.config .
+RUN make -j"$(nproc)"
+RUN make py
 
 # HACK: OpenCV can be confused by (the lack of) this driver in some systems
 RUN ln /dev/null /dev/raw1394
@@ -72,10 +74,6 @@ RUN ln -s /usr/local/lib/python2.7/dist-packages/numpy/core/include/numpy /usr/l
 RUN pip install --upgrade protobuf
 RUN pip install -U numpy
 
-COPY Makefile.config /opt/caffe/Makefile.config
-WORKDIR /opt/caffe
-RUN make -j4
-RUN make py
 
 COPY model_icdar15.caffemodel /opt/caffe/models/model_icdar15.caffemodel
 CMD python examples/text/demo_det.py
