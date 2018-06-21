@@ -57,7 +57,8 @@ RUN pip install -r requirements.txt
 ADD . .
 
 COPY Makefile.config .
-RUN make -j"$(nproc)"
+RUN make clean
+RUN make all -j8
 RUN make py
 
 # HACK: OpenCV can be confused by (the lack of) this driver in some systems
